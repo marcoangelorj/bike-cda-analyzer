@@ -3,95 +3,99 @@ import numpy as np
 import pandas as pd
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
-from fpdf import FPDF
 import base64
 import io
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Aero TT Lab Pro", layout="wide")
 
 if 'setups' not in st.session_state:
     st.session_state.setups = []
 
-st.sidebar.title("🚀 Parâmetros Aero")
+# --- SIDEBAR: PARÂMETROS ---
+st.sidebar.title("🏁 Configurações de Prova")
 uploaded_file = st.sidebar.file_uploader("1. Foto Frontal", type=["jpg", "jpeg", "png"])
 real_tire_width_mm = st.sidebar.number_input("2. Largura do Pneu (mm)", value=25.0, step=0.5)
-speed_kmh = st.sidebar.slider("3. Velocidade Alvo (km/h)", 20, 60, 40)
-drag_coeff = st.sidebar.slider("4. Coeficiente Cd", 0.50, 0.90, 0.63)
+dist_km = st.sidebar.selectbox("3. Distância da Prova (km)", [10, 20, 40, 90, 180], index=2)
+user_ftp = st.sidebar.number_input("4. Sua Potência Sustentada (Watts)", value=250, step=5)
 
-# --- APP ---
-st.title("🚴 Calculadora de Área Frontal & CdA")
+# Coeficiente Cd (Elite)
+drag_coeff = st.sidebar.select_slider(
+    "5. Coeficiente Cd",
+    options=np.around(np.arange(0.22, 0.41, 0.01), 2),
+    value=0.30
+)
+
+# --- FUNÇÕES DE CÁLCULO ---
+def estimar_tempo(cda, watts, dist_km):
+    # Simplificação: v = (P / (0.5 * rho * CdA))^(1/3)
+    rho = 1.225
+    v_ms = (watts / (0.5 * rho * cda))**(1/3)
+    tempo_segundos = (dist_km * 1000) / v_ms
+    return tempo_segundos
+
+def formatar_tempo(segundos):
+    mins, segs = divmod(int(segundos), 60)
+    horas, mins = divmod(mins, 60)
+    if horas > 0:
+        return f"{horas}h {mins}min {segs}s"
+    return f"{mins}min {segs}s"
+
+# --- CORPO DO APP ---
+st.title("🚴 Aero Analyzer & TT Predictor")
 
 if uploaded_file:
-    # Processamento da Imagem
     raw_img = Image.open(uploaded_file)
     w, h = raw_img.size
     canvas_w = 800
     canvas_h = int(h * (canvas_w / w))
     img_resized = raw_img.resize((canvas_w, canvas_h))
-
-    tab1, tab2 = st.tabs(["📏 1. Calibração (Pneu)", "👤 2. Silhueta (Corpo)"])
+    
+    tab1, tab2 = st.tabs(["📏 Calibração", "👤 Silhueta"])
 
     with tab1:
-        st.write("Desenhe uma linha sobre a largura do pneu.")
-        canvas_calib = st_canvas(
-            fill_color="rgba(255, 0, 0, 0.3)",
-            stroke_width=3,
-            stroke_color="#FF0000",
-            background_image=img_resized,
-            drawing_mode="line",
-            key="canvas_calib",
-            height=canvas_h,
-            width=canvas_w,
-            update_streamlit=True,
-        )
+        canvas_calib = st_canvas(fill_color="rgba(255,0,0,0.3)", stroke_width=3, stroke_color="#FF0000",
+                                background_image=img_resized, drawing_mode="line", key="c1", height=canvas_h, width=canvas_w)
 
     with tab2:
-        st.write("Contorne a silhueta do ciclista.")
-        canvas_silh = st_canvas(
-            fill_color="rgba(0, 255, 0, 0.3)",
-            stroke_width=2,
-            stroke_color="#00FF00",
-            background_image=img_resized,
-            drawing_mode="polygon",
-            key="canvas_silh",
-            height=canvas_h,
-            width=canvas_w,
-            update_streamlit=True,
-        )
+        canvas_silh = st_canvas(fill_color="rgba(0,255,0,0.3)", stroke_width=1, stroke_color="#00FF00",
+                               background_image=img_resized, drawing_mode="polygon", key="s1", height=canvas_h, width=canvas_w)
 
-    if st.button("📊 ANALISAR E SALVAR"):
-        # Verifica Calibração
+    if st.button("🚀 CALCULAR E COMPARAR"):
         if canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0:
             obj = canvas_calib.json_data["objects"][-1]
             px_width = np.sqrt(obj["width"]**2 + obj["height"]**2)
             
-            if px_width > 0:
+            if px_width > 0 and canvas_silh.image_data is not None:
                 mm_per_px = real_tire_width_mm / px_width
+                mask = canvas_silh.image_data[:, :, 3]
+                total_px = np.sum(mask > 0)
                 
-                # Verifica Silhueta
-                if canvas_silh.image_data is not None:
-                    mask = canvas_silh.image_data[:, :, 3]
-                    total_px = np.sum(mask > 0)
-                    
-                    area_m2 = (total_px * (mm_per_px**2)) / 1_000_000
-                    cda_calc = area_m2 * drag_coeff
-                    v_ms = speed_kmh / 3.6
-                    watts = 0.5 * 1.225 * (v_ms**3) * cda_calc
-                    
-                    st.session_state.setups.append({
-                        "Nome": f"Setup {len(st.session_state.setups)+1}",
-                        "Area (m2)": area_m2,
-                        "CdA": cda_calc,
-                        "Watts": watts
-                    })
-                    st.balloons()
-        else:
-            st.error("Por favor, desenhe a linha de calibração no pneu!")
+                area_m2 = (total_px * (mm_per_px**2)) / 1_000_000
+                cda_calc = area_m2 * drag_coeff
+                
+                # Cálculo de Tempo
+                tempo_seg = estimar_tempo(cda_calc, user_ftp, dist_km)
+                
+                st.session_state.setups.append({
+                    "Setup": f"Análise {len(st.session_state.setups)+1}",
+                    "CdA": cda_calc,
+                    "Tempo Estimado": tempo_seg,
+                    "Tempo Formatado": formatar_tempo(tempo_seg)
+                })
 
-    # Exibição de Resultados
     if st.session_state.setups:
+        st.divider()
         df = pd.DataFrame(st.session_state.setups)
-        st.table(df.style.format({'Area (m2)': '{:.4f}', 'CdA': '{:.4f}', 'Watts': '{:.1f}'}))
+        st.subheader(f"📊 Projeção para {dist_km}km a {user_ftp}W")
+        
+        # Exibir tabela simplificada
+        st.table(df[["Setup", "CdA", "Tempo Formatado"]])
+        
+        if len(df) >= 2:
+            ganho_seg = df['Tempo Estimado'].iloc[0] - df['Tempo Estimado'].iloc[-1]
+            st.metric("Tempo Salvo (vs Setup 1)", f"{int(ganho_seg)} segundos", 
+                      delta=f"~{ganho_seg/60:.1f} min", delta_color="normal")
+
 else:
-    st.info("Aguardando foto...")
+    st.info("Suba uma foto para começar.")
