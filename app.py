@@ -19,13 +19,6 @@ real_tire_width_mm = st.sidebar.number_input("2. Largura do Pneu (mm)", value=25
 speed_kmh = st.sidebar.slider("3. Velocidade Alvo (km/h)", 20, 60, 40)
 drag_coeff = st.sidebar.slider("4. Coeficiente Cd (Estimado)", 0.50, 0.90, 0.63)
 
-st.sidebar.info("""
-**Dicas de Cd:**
-- TT/Tri: 0.60 - 0.65
-- Road (Drops): 0.68 - 0.72
-- MTB/Lazer: 0.80+
-""")
-
 # --- FUNÇÃO RELATÓRIO PDF ---
 def create_pdf(df, speed):
     pdf = FPDF()
@@ -37,7 +30,6 @@ def create_pdf(df, speed):
     pdf.cell(200, 10, f"Velocidade de Analise: {speed} km/h", ln=True)
     pdf.ln(5)
     
-    # Cabeçalho Tabela
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(40, 10, "Setup", 1)
     pdf.cell(40, 10, "Area (m2)", 1)
@@ -58,10 +50,14 @@ def create_pdf(df, speed):
 st.title("🚴 Calculadora de Área Frontal & CdA")
 
 if uploaded_file:
+    # --- PROCESSO DE IMAGEM (ORDEM CORRETA) ---
     img = Image.open(uploaded_file)
     w, h = img.size
     canvas_w = 800
     canvas_h = int(h * (canvas_w / w))
+    
+    # CRIANDO A VARIÁVEL img_resized ANTES DE TUDO
+    img_resized = img.resize((canvas_w, canvas_h))
     
     tab1, tab2 = st.tabs(["📏 Calibração (Pneu)", "👤 Silhueta (Corpo)"])
 
@@ -93,21 +89,18 @@ if uploaded_file:
 
     # --- PROCESSAMENTO ---
     if st.button("📊 ANALISAR E SALVAR SETUP"):
-        # Pegar escala do pneu
         if canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0:
+            # Calibração
             obj = canvas_calib.json_data["objects"][-1]
             px_width = np.sqrt(obj["width"]**2 + obj["height"]**2)
             mm_per_px = real_tire_width_mm / px_width
             
-            # Calcular área da silhueta
+            # Área (Alpha channel)
             mask = canvas_silh.image_data[:, :, 3]
             total_px = np.sum(mask > 0)
             
-            # Converter para m2
             area_m2 = (total_px * (mm_per_px**2)) / 1_000_000
             cda_calc = area_m2 * drag_coeff
-            
-            # Watts (0.5 * rho * v^3 * CdA)
             v_ms = speed_kmh / 3.6
             watts = 0.5 * 1.225 * (v_ms**3) * cda_calc
             
@@ -117,26 +110,18 @@ if uploaded_file:
                 "CdA": cda_calc,
                 "Watts": watts
             })
-            st.success("Análise concluída e salva!")
+            st.success("Análise concluída!")
         else:
-            st.error("Erro: Você esqueceu de desenhar a linha no pneu na aba de Calibração!")
+            st.error("Erro: Desenhe a linha no pneu antes de clicar!")
 
     # --- RESULTADOS ---
     if st.session_state.setups:
-        st.divider()
         df = pd.DataFrame(st.session_state.setups)
-        st.subheader("📋 Tabela Comparativa")
         st.table(df.style.format({'Area (m2)': '{:.4f}', 'CdA': '{:.4f}', 'Watts': '{:.1f}'}))
         
-        if len(df) >= 2:
-            diff_w = df['Watts'].iloc[0] - df['Watts'].iloc[-1]
-            st.metric("Economia Estimada (v1 vs atual)", f"{diff_w:.1f} Watts", delta_color="normal")
-
-        # Botão PDF
         pdf_bytes = create_pdf(df, speed_kmh)
         b64 = base64.b64encode(pdf_bytes).decode()
-        href = f'<a href="data:application/octet-stream;base64,{b64}" download="relatorio_aero.pdf">📥 Baixar Relatório PDF</a>'
+        href = f'<a href="data:application/octet-stream;base64,{b64}" download="relatorio_aero.pdf">📥 Baixar PDF</a>'
         st.markdown(href, unsafe_allow_html=True)
-
 else:
-    st.warning("👈 Por favor, carregue uma foto na barra lateral para começar.")
+    st.warning("Carregue uma foto na barra lateral!")
