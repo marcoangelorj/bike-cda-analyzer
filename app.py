@@ -7,43 +7,27 @@ import base64
 import io
 
 # --- PATCH DE COMPATIBILIDADE PARA STREAMLIT 1.41+ ---
-# O componente streamlit-drawable-canvas tenta usar 'streamlit.elements.image.image_to_url'
-# que foi removido nas versões recentes do Streamlit. Este patch restaura a função.
 try:
     import streamlit.elements.image as st_image
     if not hasattr(st_image, "image_to_url"):
         from streamlit.runtime.memory_media_file_storage import get_memory_media_file_storage
         
         def image_to_url(image, width, clamp, channels, output_format, image_id):
-            # Simula a função removida usando o novo sistema de armazenamento do Streamlit
             storage = get_memory_media_file_storage()
-            # Converte a imagem PIL para bytes se necessário
             if isinstance(image, Image.Image):
                 buffered = io.BytesIO()
                 image.save(buffered, format="PNG")
                 content = buffered.getvalue()
             else:
                 content = image
-                
             file_url = storage.add(content, "image/png", image_id)
             return file_url
-            
         st_image.image_to_url = image_to_url
-except Exception as e:
-    # Se o patch falhar, o erro original será exibido pelo Streamlit
+except Exception:
     pass
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
-
-# FUNÇÃO PARA CONVERTER IMAGEM PARA BASE64 (Corrige fundo preto)
-def get_image_base64(img):
-    # Converte para RGB para remover canal alpha (que pode causar o fundo preto)
-    img = img.convert("RGB") 
-    buffered = io.BytesIO()
-    img.save(buffered, format="JPEG") # JPEG é mais leve e compatível
-    img_str = base64.b64encode(buffered.getvalue()).decode()
-    return f"data:image/jpeg;base64,{img_str}"
 
 # Inicializa st.session_state.setups se não existir
 if 'setups' not in st.session_state:
@@ -61,12 +45,16 @@ st.title("🚴 Aero Analyzer & TT Predictor")
 
 if uploaded_file:
     # 1. Processamento da imagem
-    img = Image.open(uploaded_file)
-    w, h = img.size
+    # Abrimos a imagem e convertemos para RGB para remover canal alpha (causador da tela preta)
+    img_raw = Image.open(uploaded_file).convert("RGB")
+    w, h = img_raw.size
     canvas_w = 700 
     canvas_h = int(h * (canvas_w / w))
-    img_resized = img.resize((canvas_w, canvas_h))
+    img_resized = img_raw.resize((canvas_w, canvas_h))
     
+    # Criamos uma chave única baseada no nome do arquivo para forçar o reset do canvas se mudar a foto
+    file_id = uploaded_file.name
+
     tab1, tab2 = st.tabs(["📏 1. Calibração", "👤 2. Silhueta"])
 
     with tab1:
@@ -77,10 +65,11 @@ if uploaded_file:
             stroke_color="#FF0000",
             background_image=img_resized,
             drawing_mode="line",
-            key="canvas_calib_v10",
+            key=f"canvas_calib_{file_id}",
             height=canvas_h,
             width=canvas_w,
             update_streamlit=True,
+            background_color="#EEEEEE", # Cor de fundo caso a imagem falhe
         )
 
     with tab2:
@@ -91,10 +80,11 @@ if uploaded_file:
             stroke_color="#00FF00",
             background_image=img_resized,
             drawing_mode="polygon",
-            key="canvas_silh_v10",
+            key=f"canvas_silh_{file_id}",
             height=canvas_h,
             width=canvas_w,
             update_streamlit=True,
+            background_color="#EEEEEE",
         )
 
     if st.button("🚀 ANALISAR SETUP"):
@@ -106,7 +96,7 @@ if uploaded_file:
             if px_width > 0:
                 if canvas_silh.image_data is not None:
                     mm_per_px = real_tire_width_mm / px_width
-                    mask = canvas_silh.image_data[:, :, 3] # Pega o canal alpha
+                    mask = canvas_silh.image_data[:, :, 3] # Pega o canal alpha do desenho
                     total_px = np.sum(mask > 0) # Conta pixels não transparentes
                     
                     if total_px > 0:
