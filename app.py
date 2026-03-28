@@ -10,20 +10,21 @@ from fpdf import FPDF
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Aero Performance Lab Pro", layout="wide")
 
-# Função para converter imagem para Base64 (A solução definitiva)
+# Função para converter imagem para Base64 (A solução que pula o erro de URL)
 def get_image_base64(img):
+    # Converte para RGB para garantir compatibilidade total
     img = img.convert("RGB")
     buffered = io.BytesIO()
     img.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
-# Função para o PDF
+# Função para o PDF (fpdf2)
 def generate_pdf(df, tire_mm, ftp, athlete_name):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, "Relatorio de Analise Aerodinamica", ln=True, align="C")
+    pdf.cell(0, 10, "Relatorio de Analise Aerodinamica Frontal", ln=True, align="C")
     pdf.set_font("helvetica", "", 12)
     pdf.ln(10)
     pdf.cell(0, 10, f"Atleta: {athlete_name} | Pneu: {tire_mm}mm | Potencia: {ftp}W", ln=True)
@@ -36,9 +37,9 @@ if 'setups' not in st.session_state:
     st.session_state.setups = []
 
 # --- SIDEBAR ---
-st.sidebar.header("⚙️ Parametros")
+st.sidebar.header("⚙️ Parâmetros")
 athlete_name = st.sidebar.text_input("Nome do Atleta", "Ciclista Pro")
-uploaded_file = st.sidebar.file_uploader("Upload PNG/JPG", type=["png", "jpg", "jpeg"])
+uploaded_file = st.sidebar.file_uploader("Upload PNG (Fundo Branco)", type=["png", "jpg", "jpeg"])
 tire_mm = st.sidebar.number_input("Largura Pneu (mm)", value=25.0)
 ftp_watts = st.sidebar.number_input("Watts (FTP)", value=250)
 cd_val = st.sidebar.select_slider("Cd", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
@@ -46,14 +47,14 @@ cd_val = st.sidebar.select_slider("Cd", options=np.around(np.arange(0.22, 0.41, 
 st.title("🚴 Aero Analyzer Pro")
 
 if uploaded_file:
+    # Processamento da imagem
     img = Image.open(uploaded_file)
-    # Redimensionamento
     canvas_w = 700
     w, h = img.size
     canvas_h = int(h * (canvas_w / w))
     img_res = img.resize((canvas_w, canvas_h))
     
-    # CONVERSÃO PARA BASE64
+    # CONVERSÃO PARA BASE64 (A Mágica)
     img_b64 = get_image_base64(img_res)
 
     t1, t2 = st.tabs(["📏 1. Calibrar", "👤 2. Silhueta"])
@@ -64,11 +65,12 @@ if uploaded_file:
             fill_color="rgba(255,0,0,0.3)",
             stroke_width=3,
             stroke_color="#FF0000",
-            background_color=img_b64, # INJETANDO IMAGEM VIA BASE64
+            background_color=img_b64, # INJETANDO IMAGEM COMO TEXTO
             drawing_mode="line",
-            key="calib_render",
+            key="calib_render_v2",
             height=canvas_h,
             width=canvas_w,
+            update_streamlit=True
         )
 
     with t2:
@@ -78,11 +80,12 @@ if uploaded_file:
             fill_color="rgba(0,255,0,0.4)",
             stroke_width=2,
             stroke_color="#00FF00",
-            background_color=img_b64, # INJETANDO IMAGEM VIA BASE64
+            background_color=img_b64, # INJETANDO IMAGEM COMO TEXTO
             drawing_mode="polygon",
-            key="silh_render",
+            key="silh_render_v2",
             height=canvas_h,
             width=canvas_w,
+            update_streamlit=True
         )
 
     if st.button("🚀 ANALISAR", use_container_width=True):
@@ -108,3 +111,5 @@ if uploaded_file:
         st.table(df)
         pdf_out = generate_pdf(df, tire_mm, ftp_watts, athlete_name)
         st.download_button("📥 Baixar PDF", pdf_out, "analise.pdf", "application/pdf")
+else:
+    st.info("Aguardando imagem PNG com fundo branco...")
