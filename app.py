@@ -7,19 +7,22 @@ import base64
 import io
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Aero TT Lab Pro", layout="wide")
+st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
 
-# FUNÇÃO MÁGICA: Converte imagem em texto para o fundo do Canvas
+# FUNÇÃO PARA CONVERTER IMAGEM (Corrige fundo preto e erro de URL)
 def get_image_base64(img):
+    # Converte para RGB para remover canal alpha (que causa o fundo preto)
+    img = img.convert("RGB") 
     buffered = io.BytesIO()
-    img.save(buffered, format="PNG")
+    img.save(buffered, format="JPEG") # JPEG é mais leve e compatível
     img_str = base64.b64encode(buffered.getvalue()).decode()
-    return f"data:image/png;base64,{img_str}"
+    return f"data:image/jpeg;base64,{img_str}"
 
 if 'setups' not in st.session_state:
     st.session_state.setups = []
 
-st.sidebar.title("🏁 Configurações TT")
+# --- SIDEBAR ---
+st.sidebar.title("🏁 Parâmetros")
 uploaded_file = st.sidebar.file_uploader("1. Foto Frontal", type=["jpg", "jpeg", "png"])
 real_tire_width_mm = st.sidebar.number_input("2. Largura Pneu (mm)", value=25.0)
 dist_km = st.sidebar.selectbox("3. Distância (km)", [10, 20, 40, 90, 180], index=2)
@@ -29,14 +32,14 @@ drag_coeff = st.sidebar.select_slider("5. Cd", options=np.around(np.arange(0.22,
 st.title("🚴 Aero Analyzer & TT Predictor")
 
 if uploaded_file:
-    # Processamento da imagem
+    # 1. Processamento da imagem
     img = Image.open(uploaded_file)
     w, h = img.size
     canvas_w = 700 
     canvas_h = int(h * (canvas_w / w))
     img_resized = img.resize((canvas_w, canvas_h))
     
-    # CONVERSÃO PARA BASE64
+    # 2. CONVERSÃO PARA BASE64 SEM TRANSPARÊNCIA
     img_b64 = get_image_base64(img_resized)
 
     tab1, tab2 = st.tabs(["📏 1. Calibração", "👤 2. Silhueta"])
@@ -47,11 +50,12 @@ if uploaded_file:
             fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=3,
             stroke_color="#FF0000",
-            background_color=img_b64, # <-- TRUQUE: A imagem entra como 'cor'
+            background_image=Image.open(io.BytesIO(base64.b64decode(img_b64.split(",")[1]))),
             drawing_mode="line",
-            key="c_calib_final",
+            key="canvas_calib_v10",
             height=canvas_h,
             width=canvas_w,
+            update_streamlit=True,
         )
 
     with tab2:
@@ -60,11 +64,12 @@ if uploaded_file:
             fill_color="rgba(0, 255, 0, 0.3)",
             stroke_width=2,
             stroke_color="#00FF00",
-            background_color=img_b64, # <-- TRUQUE: A imagem entra como 'cor'
+            background_image=Image.open(io.BytesIO(base64.b64decode(img_b64.split(",")[1]))),
             drawing_mode="polygon",
-            key="c_silh_final",
+            key="canvas_silh_v10",
             height=canvas_h,
             width=canvas_w,
+            update_streamlit=True,
         )
 
     if st.button("🚀 ANALISAR SETUP"):
@@ -94,6 +99,7 @@ if uploaded_file:
                 })
 
     if st.session_state.setups:
+        st.divider()
         st.table(pd.DataFrame(st.session_state.setups))
 else:
     st.info("Suba uma foto para começar.")
