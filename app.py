@@ -6,6 +6,33 @@ from PIL import Image
 import base64
 import io
 
+# --- PATCH DE COMPATIBILIDADE PARA STREAMLIT 1.41+ ---
+# O componente streamlit-drawable-canvas tenta usar 'streamlit.elements.image.image_to_url'
+# que foi removido nas versões recentes do Streamlit. Este patch restaura a função.
+try:
+    import streamlit.elements.image as st_image
+    if not hasattr(st_image, "image_to_url"):
+        from streamlit.runtime.memory_media_file_storage import get_memory_media_file_storage
+        
+        def image_to_url(image, width, clamp, channels, output_format, image_id):
+            # Simula a função removida usando o novo sistema de armazenamento do Streamlit
+            storage = get_memory_media_file_storage()
+            # Converte a imagem PIL para bytes se necessário
+            if isinstance(image, Image.Image):
+                buffered = io.BytesIO()
+                image.save(buffered, format="PNG")
+                content = buffered.getvalue()
+            else:
+                content = image
+                
+            file_url = storage.add(content, "image/png", image_id)
+            return file_url
+            
+        st_image.image_to_url = image_to_url
+except Exception as e:
+    # Se o patch falhar, o erro original será exibido pelo Streamlit
+    pass
+
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
 
@@ -40,9 +67,6 @@ if uploaded_file:
     canvas_h = int(h * (canvas_w / w))
     img_resized = img.resize((canvas_w, canvas_h))
     
-    # 2. CONVERSÃO PARA BASE64 SEM TRANSPARÊNCIA
-    img_b64 = get_image_base64(img_resized)
-
     tab1, tab2 = st.tabs(["📏 1. Calibração", "👤 2. Silhueta"])
 
     with tab1:
@@ -77,7 +101,6 @@ if uploaded_file:
         if canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0:
             obj = canvas_calib.json_data["objects"][-1]
             # Calcula o comprimento da linha desenhada para calibração
-            # A linha pode ser diagonal, então usamos a distância euclidiana
             px_width = np.sqrt(obj["width"]**2 + obj["height"]**2)
             
             if px_width > 0:
@@ -94,7 +117,6 @@ if uploaded_file:
                         rho = 1.225 
                         
                         # Cálculo da velocidade em m/s
-                        # P = 0.5 * rho * CdA * v^3  =>  v = (P / (0.5 * rho * CdA))^(1/3)
                         try:
                             v_ms = (user_ftp / (0.5 * rho * cda_calc))**(1/3)
                             tempo_seg = (dist_km * 1000) / v_ms
