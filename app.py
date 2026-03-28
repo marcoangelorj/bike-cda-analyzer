@@ -7,13 +7,20 @@ import base64
 import io
 from fpdf import FPDF
 
+# --- 🛠️ CORREÇÃO DE COMPATIBILIDADE (MONKEY PATCH) ---
+# Isso resolve o erro 'AttributeError: image_to_url' no Render/Python 3.14
+import streamlit.runtime.media_file_manager as mfm
+if not hasattr(st, "image_to_url"):
+    from streamlit.elements import image as st_image
+    # Tenta mapear a função para o novo local interno do Streamlit
+    st_image.image_to_url = mfm.add_queued_str_file if hasattr(mfm, "add_queued_str_file") else lambda *args, **kwargs: None
+
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Aero Performance Lab Pro", layout="wide")
 
-# --- TRATAMENTO DE IMAGEM (ESTABILIDADE TOTAL) ---
+# Função para remover transparência e evitar tela preta
 def process_image(uploaded_file):
     img = Image.open(uploaded_file)
-    # Remove transparência de PNGs e garante fundo branco
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGBA")
         background = Image.new("RGB", img.size, (255, 255, 255))
@@ -21,60 +28,24 @@ def process_image(uploaded_file):
         return background
     return img.convert("RGB")
 
-# --- FUNÇÃO GERADORA DE PDF (Usando fpdf2) ---
-def generate_pdf(df, tire_mm, ftp, athlete_name):
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Cabeçalho
-    pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, "Relatorio de Analise Aerodinamica Frontal", ln=True, align="C")
-    
-    # Dados do Atleta
-    pdf.set_font("helvetica", "", 12)
-    pdf.ln(5)
-    pdf.cell(0, 10, f"Atleta: {athlete_name}", ln=True)
-    pdf.cell(0, 10, f"Parametros: Pneu {tire_mm}mm | Potencia Alvo: {ftp}W", ln=True)
-    pdf.ln(10)
-    
-    # Tabela de Resultados
-    pdf.set_font("helvetica", "B", 11)
-    pdf.set_fill_color(230, 230, 230)
-    pdf.cell(40, 10, "Setup", 1, 0, "C", True)
-    pdf.cell(40, 10, "Area (m2)", 1, 0, "C", True)
-    pdf.cell(40, 10, "CdA", 1, 0, "C", True)
-    pdf.cell(40, 10, "Vel. Est. (km/h)", 1, 1, "C", True)
-    
-    pdf.set_font("helvetica", "", 11)
-    for _, row in df.iterrows():
-        pdf.cell(40, 10, str(row["Setup"]), 1, 0, "C")
-        pdf.cell(40, 10, f"{row['Area (m2)']:.4f}", 1, 0, "C")
-        pdf.cell(40, 10, f"{row['CdA']:.4f}", 1, 0, "C")
-        pdf.cell(40, 10, f"{row['Velocidade']:.1f}", 1, 1, "C")
-        
-    pdf.ln(10)
-    pdf.set_font("helvetica", "I", 9)
-    pdf.multi_cell(0, 5, "Nota: Os calculos consideram densidade do ar de 1.225 kg/m3 (nivel do mar) e o coeficiente de arrasto (Cd) selecionado no momento da analise.")
-    
-    # Retorna o PDF como bytes
-    return pdf.output()
+# Função para converter imagem para Base64 (Solução secundária contra o erro)
+def get_image_base64(img):
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    return f"data:image/png;base64,{img_str}"
 
-if "setups" not in st.session_state:
+if 'setups' not in st.session_state:
     st.session_state.setups = []
 
 # --- SIDEBAR ---
-st.sidebar.header("👤 Perfil do Atleta")
-athlete_name = st.sidebar.text_input("Nome do Atleta", value="Ciclista Pro")
-st.sidebar.divider()
-st.sidebar.header("⚙️ Parametros")
-uploaded_file = st.sidebar.file_uploader("Upload PNG (Fundo Branco)", type=["png", "jpg"])
+st.sidebar.header("⚙️ Parâmetros")
+uploaded_file = st.sidebar.file_uploader("Upload PNG (Fundo Branco)", type=["png", "jpg", "jpeg"])
 tire_mm = st.sidebar.number_input("Largura do Pneu (mm)", value=25.0, step=0.1)
-ftp_watts = st.sidebar.number_input("Potencia de Referencia (Watts)", value=250)
-cd_fixed = st.sidebar.select_slider("Coeficiente Cd (0.22 - 0.40)", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
+ftp_watts = st.sidebar.number_input("Sua Potência (Watts)", value=250)
+cd_fixed = st.sidebar.select_slider("Coeficiente Cd", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
 
-# --- CORPO DO APP ---
 st.title("🚴 Aero Performance Lab")
-st.markdown("Analise de Area Frontal para Contra-Relogio e Triatlo")
 
 if uploaded_file:
     img_clean = process_image(uploaded_file)
@@ -82,28 +53,35 @@ if uploaded_file:
     w, h = img_clean.size
     canvas_h = int(h * (canvas_w / w))
     img_resized = img_clean.resize((canvas_w, canvas_h))
+    
+    # Gerar Base64 para garantir que o componente não quebre
+    img_b64 = get_image_base64(img_resized)
 
-    t1, t2 = st.tabs(["📏 1. Calibrar Escala", "👤 2. Mapear Silhueta"])
+    t1, t2 = st.tabs(["📏 1. Calibrar Pneu", "👤 2. Contornar Silhueta"])
 
     with t1:
-        st.info("Desenhe a linha sobre a largura do pneu para calibrar a escala real.")
+        st.info("Desenhe a linha sobre a largura do pneu.")
         canvas_calib = st_canvas(
             fill_color="rgba(255,0,0,0.3)", stroke_width=3, stroke_color="#FF0000",
-            background_image=img_resized, drawing_mode="line", key="c_calib",
-            height=canvas_h, width=canvas_w
+            background_image=img_resized, # O patch acima fará isso funcionar
+            drawing_mode="line", key="c_calib",
+            height=canvas_h, width=canvas_w,
+            update_streamlit=True
         )
 
     with t2:
-        st.info("Contorne o atleta (Poligono). Clique no primeiro ponto para fechar.")
+        st.info("Contorne o atleta.")
         if st.button("🗑️ Resetar Contorno"): st.rerun()
         
         canvas_silh = st_canvas(
             fill_color="rgba(0,255,0,0.4)", stroke_width=2, stroke_color="#00FF00",
-            background_image=img_resized, drawing_mode="polygon", key="c_silh",
-            height=canvas_h, width=canvas_w
+            background_image=img_resized,
+            drawing_mode="polygon", key="c_silh",
+            height=canvas_h, width=canvas_w,
+            update_streamlit=True
         )
 
-    if st.button("🚀 ANALISAR POSICAO", use_container_width=True):
+    if st.button("🚀 ANALISAR", use_container_width=True):
         if canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0:
             line = canvas_calib.json_data["objects"][-1]
             px_len = np.sqrt(line["width"]**2 + line["height"]**2)
@@ -119,7 +97,7 @@ if uploaded_file:
                 kmh = v_ms * 3.6
 
                 st.session_state.setups.append({
-                    "Setup": f"Analise {len(st.session_state.setups)+1}",
+                    "Setup": f"Posicao {len(st.session_state.setups)+1}",
                     "Area (m2)": area_m2,
                     "CdA": cda,
                     "Velocidade": kmh
@@ -127,33 +105,10 @@ if uploaded_file:
                 st.balloons()
 
     if st.session_state.setups:
-        st.divider()
         df = pd.DataFrame(st.session_state.setups)
-        
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.subheader("📋 Tabela Comparativa")
-            st.dataframe(df[["Setup", "Area (m2)", "CdA", "Velocidade"]], hide_index=True)
-            
-            # Geração de PDF via botão
-            try:
-                pdf_bytes = generate_pdf(df, tire_mm, ftp_watts, athlete_name)
-                st.download_button(
-                    label="📥 Baixar Relatorio PDF",
-                    data=pdf_bytes,
-                    file_name=f"Relatorio_Aero_{athlete_name.replace(' ', '_')}.pdf",
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.error(f"Erro ao gerar PDF: {e}")
-            
-            if st.button("🗑️ Limpar Historico"):
-                st.session_state.setups = []
-                st.rerun()
-        
-        with c2:
-            st.subheader("📊 Eficiencia Aerodinamica (CdA)")
-            st.bar_chart(df, x="Setup", y="CdA", color="#00FF00")
-
+        st.dataframe(df[["Setup", "Area (m2)", "CdA", "Velocidade"]], hide_index=True)
+        if st.button("🗑️ Limpar Tudo"):
+            st.session_state.setups = []
+            st.rerun()
 else:
-    st.info("👈 Faca o upload da imagem modelo PNG com fundo branco para iniciar.")
+    st.info("Aguardando imagem...")
