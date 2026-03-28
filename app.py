@@ -9,24 +9,25 @@ import io
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
 
-# FUNÇÃO PARA CONVERTER IMAGEM (Corrige fundo preto e erro de URL)
+# FUNÇÃO PARA CONVERTER IMAGEM PARA BASE64 (Corrige fundo preto)
 def get_image_base64(img):
-    # Converte para RGB para remover canal alpha (que causa o fundo preto)
+    # Converte para RGB para remover canal alpha (que pode causar o fundo preto)
     img = img.convert("RGB") 
     buffered = io.BytesIO()
     img.save(buffered, format="JPEG") # JPEG é mais leve e compatível
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
+# Inicializa st.session_state.setups se não existir
 if 'setups' not in st.session_state:
     st.session_state.setups = []
 
 # --- SIDEBAR ---
 st.sidebar.title("🏁 Parâmetros")
 uploaded_file = st.sidebar.file_uploader("1. Foto Frontal", type=["jpg", "jpeg", "png"])
-real_tire_width_mm = st.sidebar.number_input("2. Largura Pneu (mm)", value=25.0)
+real_tire_width_mm = st.sidebar.number_input("2. Largura Pneu (mm)", value=25.0, min_value=1.0)
 dist_km = st.sidebar.selectbox("3. Distância (km)", [10, 20, 40, 90, 180], index=2)
-user_ftp = st.sidebar.number_input("4. Watts (FTP)", value=250)
+user_ftp = st.sidebar.number_input("4. Watts (FTP)", value=250, min_value=1)
 drag_coeff = st.sidebar.select_slider("5. Cd", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
 
 st.title("🚴 Aero Analyzer & TT Predictor")
@@ -45,7 +46,7 @@ if uploaded_file:
     tab1, tab2 = st.tabs(["📏 1. Calibração", "👤 2. Silhueta"])
 
     with tab1:
-        st.write("Desenhe a linha no pneu.")
+        st.write("Desenhe uma linha sobre a largura do pneu na imagem para calibração.")
         canvas_calib = st_canvas(
             fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=3,
@@ -59,7 +60,7 @@ if uploaded_file:
         )
 
     with tab2:
-        st.write("Contorne o ciclista.")
+        st.write("Contorne o ciclista para definir a área frontal.")
         canvas_silh = st_canvas(
             fill_color="rgba(0, 255, 0, 0.3)",
             stroke_width=2,
@@ -75,31 +76,53 @@ if uploaded_file:
     if st.button("🚀 ANALISAR SETUP"):
         if canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0:
             obj = canvas_calib.json_data["objects"][-1]
+            # Calcula o comprimento da linha desenhada para calibração
+            # A linha pode ser diagonal, então usamos a distância euclidiana
             px_width = np.sqrt(obj["width"]**2 + obj["height"]**2)
             
-            if px_width > 0 and canvas_silh.image_data is not None:
-                mm_per_px = real_tire_width_mm / px_width
-                mask = canvas_silh.image_data[:, :, 3]
-                total_px = np.sum(mask > 0)
-                
-                area_m2 = (total_px * (mm_per_px**2)) / 1_000_000
-                cda_calc = area_m2 * drag_coeff
-                
-                v_ms = (user_ftp / (0.5 * 1.225 * cda_calc))**(1/3)
-                tempo_seg = (dist_km * 1000) / v_ms
-                
-                mins, segs = divmod(int(tempo_seg), 60)
-                horas, mins = divmod(mins, 60)
-                tempo_fmt = f"{horas}h {mins}m {segs}s" if horas > 0 else f"{mins}m {segs}s"
+            if px_width > 0:
+                if canvas_silh.image_data is not None:
+                    mm_per_px = real_tire_width_mm / px_width
+                    mask = canvas_silh.image_data[:, :, 3] # Pega o canal alpha
+                    total_px = np.sum(mask > 0) # Conta pixels não transparentes
+                    
+                    if total_px > 0:
+                        area_m2 = (total_px * (mm_per_px**2)) / 1_000_000 # Converte mm^2 para m^2
+                        cda_calc = area_m2 * drag_coeff
+                        
+                        # Constante da densidade do ar (rho) em kg/m^3
+                        rho = 1.225 
+                        
+                        # Cálculo da velocidade em m/s
+                        # P = 0.5 * rho * CdA * v^3  =>  v = (P / (0.5 * rho * CdA))^(1/3)
+                        try:
+                            v_ms = (user_ftp / (0.5 * rho * cda_calc))**(1/3)
+                            tempo_seg = (dist_km * 1000) / v_ms
+                            
+                            mins, segs = divmod(int(tempo_seg), 60)
+                            horas, mins = divmod(mins, 60)
+                            tempo_fmt = f"{horas}h {mins}m {segs}s" if horas > 0 else f"{mins}m {segs}s"
 
-                st.session_state.setups.append({
-                    "Setup": f"Análise {len(st.session_state.setups)+1}",
-                    "CdA": round(cda_calc, 4),
-                    "Tempo": tempo_fmt
-                })
+                            st.session_state.setups.append({
+                                "Setup": f"Análise {len(st.session_state.setups)+1}",
+                                "CdA": round(cda_calc, 4),
+                                "Tempo": tempo_fmt
+                            })
+                            st.success("Análise concluída com sucesso!")
+                        except ZeroDivisionError:
+                            st.error("Erro: CdA calculado é zero. Verifique se a silhueta foi desenhada corretamente.")
+                    else:
+                        st.warning("Por favor, contorne o ciclista na aba 'Silhueta' para calcular a área frontal.")
+                else:
+                    st.warning("Dados da silhueta não encontrados. Por favor, contorne o ciclista na aba 'Silhueta'.")
+            else:
+                st.warning("Por favor, desenhe uma linha válida para calibração na aba 'Calibração'.")
+        else:
+            st.warning("Por favor, desenhe uma linha para calibração na aba 'Calibração'.")
 
     if st.session_state.setups:
         st.divider()
+        st.subheader("Resultados das Análises")
         st.table(pd.DataFrame(st.session_state.setups))
 else:
-    st.info("Suba uma foto para começar.")
+    st.info("Suba uma foto para começar a análise aerodinâmica.")
