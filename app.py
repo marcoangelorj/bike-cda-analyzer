@@ -8,18 +8,18 @@ import io
 from fpdf import FPDF
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Aero Performance Lab Pro", layout="wide")
+st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
 
-# Função para converter imagem para Base64 (A solução que pula o erro de URL)
+# Função para converter imagem para Base64 (A solução definitiva)
 def get_image_base64(img):
-    # Converte para RGB para garantir compatibilidade total
+    # Converte para RGB para garantir compatibilidade
     img = img.convert("RGB")
     buffered = io.BytesIO()
     img.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
-# Função para o PDF (fpdf2)
+# Função para o PDF
 def generate_pdf(df, tire_mm, ftp, athlete_name):
     pdf = FPDF()
     pdf.add_page()
@@ -54,7 +54,7 @@ if uploaded_file:
     canvas_h = int(h * (canvas_w / w))
     img_res = img.resize((canvas_w, canvas_h))
     
-    # CONVERSÃO PARA BASE64 (A Mágica)
+    # CONVERSÃO PARA BASE64 (Pula o erro de URL do Streamlit)
     img_b64 = get_image_base64(img_res)
 
     t1, t2 = st.tabs(["📏 1. Calibrar", "👤 2. Silhueta"])
@@ -67,7 +67,7 @@ if uploaded_file:
             stroke_color="#FF0000",
             background_color=img_b64, # INJETANDO IMAGEM COMO TEXTO
             drawing_mode="line",
-            key="calib_render_v2",
+            key="calib_render_final",
             height=canvas_h,
             width=canvas_w,
             update_streamlit=True
@@ -82,7 +82,7 @@ if uploaded_file:
             stroke_color="#00FF00",
             background_color=img_b64, # INJETANDO IMAGEM COMO TEXTO
             drawing_mode="polygon",
-            key="silh_render_v2",
+            key="silh_render_final",
             height=canvas_h,
             width=canvas_w,
             update_streamlit=True
@@ -112,4 +112,4 @@ if uploaded_file:
         pdf_out = generate_pdf(df, tire_mm, ftp_watts, athlete_name)
         st.download_button("📥 Baixar PDF", pdf_out, "analise.pdf", "application/pdf")
 else:
-    st.info("Aguardando imagem PNG com fundo branco...")
+    st.info("Aguardando imagem PNG...")
