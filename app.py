@@ -10,28 +10,22 @@ from fpdf import FPDF
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Aero Analyzer Pro", layout="wide")
 
-# Função para converter imagem para Base64 (A solução definitiva)
+# FUNÇÃO CORRIGIDA: Remove transparência e garante que o Base64 seja visível
 def get_image_base64(img):
-    # Converte para RGB para garantir compatibilidade
-    img = img.convert("RGB")
+    # Força a conversão para RGB e cria um fundo branco
+    # Isso impede que o fundo fique preto em imagens PNG transparentes
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGBA")
+        new_img = Image.new("RGB", img.size, (255, 255, 255))
+        new_img.paste(img, mask=img.split()[3])
+        img = new_img
+    else:
+        img = img.convert("RGB")
+        
     buffered = io.BytesIO()
-    img.save(buffered, format="JPEG")
+    img.save(buffered, format="JPEG", quality=90)
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
-
-# Função para o PDF
-def generate_pdf(df, tire_mm, ftp, athlete_name):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, "Relatorio de Analise Aerodinamica Frontal", ln=True, align="C")
-    pdf.set_font("helvetica", "", 12)
-    pdf.ln(10)
-    pdf.cell(0, 10, f"Atleta: {athlete_name} | Pneu: {tire_mm}mm | Potencia: {ftp}W", ln=True)
-    pdf.ln(10)
-    for _, row in df.iterrows():
-        pdf.cell(0, 10, f"{row['Setup']}: CdA {row['CdA']:.4f} | Vel: {row['Velocidade']:.1f} km/h", ln=True)
-    return pdf.output()
 
 if 'setups' not in st.session_state:
     st.session_state.setups = []
@@ -39,7 +33,7 @@ if 'setups' not in st.session_state:
 # --- SIDEBAR ---
 st.sidebar.header("⚙️ Parâmetros")
 athlete_name = st.sidebar.text_input("Nome do Atleta", "Ciclista Pro")
-uploaded_file = st.sidebar.file_uploader("Upload PNG (Fundo Branco)", type=["png", "jpg", "jpeg"])
+uploaded_file = st.sidebar.file_uploader("Upload Foto (PNG/JPG)", type=["png", "jpg", "jpeg"])
 tire_mm = st.sidebar.number_input("Largura Pneu (mm)", value=25.0)
 ftp_watts = st.sidebar.number_input("Watts (FTP)", value=250)
 cd_val = st.sidebar.select_slider("Cd", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
@@ -47,14 +41,13 @@ cd_val = st.sidebar.select_slider("Cd", options=np.around(np.arange(0.22, 0.41, 
 st.title("🚴 Aero Analyzer Pro")
 
 if uploaded_file:
-    # Processamento da imagem
     img = Image.open(uploaded_file)
     canvas_w = 700
     w, h = img.size
     canvas_h = int(h * (canvas_w / w))
     img_res = img.resize((canvas_w, canvas_h))
     
-    # CONVERSÃO PARA BASE64 (Pula o erro de URL do Streamlit)
+    # Gerando o Base64 "limpo" (sem fundo preto)
     img_b64 = get_image_base64(img_res)
 
     t1, t2 = st.tabs(["📏 1. Calibrar", "👤 2. Silhueta"])
@@ -65,9 +58,9 @@ if uploaded_file:
             fill_color="rgba(255,0,0,0.3)",
             stroke_width=3,
             stroke_color="#FF0000",
-            background_color=img_b64, # INJETANDO IMAGEM COMO TEXTO
+            background_color=img_b64, # O componente lerá o Base64 como imagem
             drawing_mode="line",
-            key="calib_render_final",
+            key="calib_render_v3",
             height=canvas_h,
             width=canvas_w,
             update_streamlit=True
@@ -80,9 +73,9 @@ if uploaded_file:
             fill_color="rgba(0,255,0,0.4)",
             stroke_width=2,
             stroke_color="#00FF00",
-            background_color=img_b64, # INJETANDO IMAGEM COMO TEXTO
+            background_color=img_b64,
             drawing_mode="polygon",
-            key="silh_render_final",
+            key="silh_render_v3",
             height=canvas_h,
             width=canvas_w,
             update_streamlit=True
@@ -101,7 +94,7 @@ if uploaded_file:
                 v_ms = (ftp_watts / (0.5 * 1.225 * cda))**(1/3)
                 
                 st.session_state.setups.append({
-                    "Setup": f"Posicao {len(st.session_state.setups)+1}",
+                    "Setup": f"Posição {len(st.session_state.setups)+1}",
                     "CdA": cda,
                     "Velocidade": v_ms * 3.6
                 })
@@ -109,7 +102,5 @@ if uploaded_file:
     if st.session_state.setups:
         df = pd.DataFrame(st.session_state.setups)
         st.table(df)
-        pdf_out = generate_pdf(df, tire_mm, ftp_watts, athlete_name)
-        st.download_button("📥 Baixar PDF", pdf_out, "analise.pdf", "application/pdf")
 else:
-    st.info("Aguardando imagem PNG...")
+    st.info("Aguardando imagem...")
