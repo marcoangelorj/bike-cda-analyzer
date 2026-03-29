@@ -8,9 +8,10 @@ import io
 from fpdf import FPDF
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Aero Performance Lab Pro v3", layout="wide")
+st.set_page_config(page_title="Aero Performance Lab Pro v4", layout="wide")
 
 # --- TRATAMENTO DE IMAGEM ---
+@st.cache_data
 def get_clean_image(uploaded_file, canvas_w=750):
     img = Image.open(uploaded_file).convert("RGBA")
     white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
@@ -54,8 +55,11 @@ def generate_pdf(df, tire_mm, ftp, athlete):
     pdf.cell(0, 10, "Analise baseada em simulacao matematica (rho=1.225). Resultados podem variar na estrada.", align="C")
     return pdf.output()
 
+# Inicializar estado da sessão
 if 'setups' not in st.session_state:
     st.session_state.setups = []
+if 'calib_data' not in st.session_state:
+    st.session_state.calib_data = None
 
 # --- SIDEBAR ---
 st.sidebar.header("⚙️ Configuracoes")
@@ -66,16 +70,17 @@ ftp_watts = st.sidebar.number_input("Potencia (W)", value=250)
 cd_val = st.sidebar.select_slider("Estimativa Cd", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
 obs_tecnica = st.sidebar.text_area("Observacoes para este Setup", placeholder="Ex: Capacete Aero Giro, Maos juntas...")
 
-st.title("🚴 Aero Analyzer Pro v3")
+st.title("🚴 Aero Analyzer Pro v4")
 
 if uploaded_file:
     # Processar imagem base
     img_pil, c_w, c_h = get_clean_image(uploaded_file)
     
+    # Criar abas
     t1, t2 = st.tabs(["📏 1. Calibrar", "👤 2. Silhueta"])
 
     with t1:
-        st.info("Ative o zoom para marcar o pneu com precisão.")
+        st.info("Ative o zoom para marcar o pneu com precisão. A calibração será salva automaticamente.")
         use_zoom = st.checkbox("Ativar Zoom de Calibração", value=False)
         
         zoom_factor = 2.0
@@ -91,11 +96,19 @@ if uploaded_file:
             background_image=img_display, drawing_mode="line", key="c_calib",
             height=c_h, width=c_w, update_streamlit=True
         )
+        
+        # Salvar calibração no estado da sessão
+        if canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0:
+            st.session_state.calib_data = {
+                "line": canvas_calib.json_data["objects"][-1],
+                "zoom_active": use_zoom
+            }
 
     with t2:
         col_main, col_ctrl = st.columns([4, 1])
         with col_main:
-            st.info("Marque a silhueta do ciclista clicando nos pontos.")
+            st.info("Marque a silhueta do ciclista clicando nos pontos. O cálculo usa a calibração da aba anterior.")
+            # A imagem aparece instantaneamente aqui
             canvas_silh = st_canvas(
                 fill_color="rgba(0,255,0,0.4)", stroke_width=2, stroke_color="#00FF00",
                 background_image=img_pil, drawing_mode="polygon", key="c_silh",
@@ -105,17 +118,21 @@ if uploaded_file:
         with col_ctrl:
             st.write("### Ações")
             if st.button("🚀 CALCULAR E SALVAR", use_container_width=True):
-                has_calib = canvas_calib.json_data and len(canvas_calib.json_data["objects"]) > 0
+                has_calib = st.session_state.calib_data is not None
                 has_silh = canvas_silh.image_data is not None
                 
                 if has_calib and has_silh:
-                    line = canvas_calib.json_data["objects"][-1]
+                    calib = st.session_state.calib_data
+                    line = calib["line"]
+                    zoom_active = calib["zoom_active"]
+                    
                     dx = line["width"] * line["scaleX"]
                     dy = line["height"] * line["scaleY"]
                     px_len_canvas = np.sqrt(dx**2 + dy**2)
                     
                     # Ajustar px_len se o zoom estava ativo
-                    px_len_real = px_len_canvas / zoom_factor if use_zoom else px_len_canvas
+                    zoom_factor = 2.0
+                    px_len_real = px_len_canvas / zoom_factor if zoom_active else px_len_canvas
                     
                     if px_len_real > 0:
                         mm_px = tire_mm / px_len_real
@@ -137,7 +154,10 @@ if uploaded_file:
                     else:
                         st.error("Calibração inválida.")
                 else:
-                    st.warning("Calibre (Aba 1) e desenhe a silhueta (Aba 2).")
+                    if not has_calib:
+                        st.warning("⚠️ Calibração não encontrada. Faça a calibração na Aba 1.")
+                    if not has_silh:
+                        st.warning("⚠️ Silhueta não desenhada. Marque a silhueta na Aba 2.")
 
             if st.button("🗑️ Limpar Silhueta", use_container_width=True):
                 st.rerun()
@@ -154,4 +174,5 @@ if uploaded_file:
         
         if st.button("🗑️ Reiniciar Tudo"):
             st.session_state.setups = []
+            st.session_state.calib_data = None
             st.rerun()
