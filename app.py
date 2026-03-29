@@ -8,7 +8,7 @@ import io
 from fpdf import FPDF
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Aero Performance Lab Pro v5", layout="wide")
+st.set_page_config(page_title="Aero Performance Lab Pro v6", layout="wide")
 
 # --- TRATAMENTO DE IMAGEM ---
 @st.cache_data
@@ -39,14 +39,16 @@ def generate_pdf(df, tire_mm, ftp, athlete):
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(35, 10, "ID Setup", 1, 0, "C", True)
     pdf.cell(35, 10, "CdA", 1, 0, "C", True)
+    # Correção: Use aspas simples dentro da f-string que usa aspas duplas
     pdf.cell(40, 10, "Vel. (km/h)", 1, 0, "C", True)
     pdf.cell(80, 10, "Observacoes Tecnicas", 1, 1, "C", True)
     
     pdf.set_font("helvetica", "", 9)
     for _, row in df.iterrows():
         pdf.cell(35, 10, str(row["Setup"]), 1, 0, "C")
-        pdf.cell(35, 10, f"{row["CdA"]:.4f}", 1, 0, "C")
-        pdf.cell(40, 10, f"{row["Vel. Est."]:.1f}", 1, 0, "C")
+        # CORREÇÃO DE SINTAXE AQUI: Usando aspas simples para chaves do dicionário
+        pdf.cell(35, 10, f"{row['CdA']:.4f}", 1, 0, "C")
+        pdf.cell(40, 10, f"{row['Vel. Est.']:.1f}", 1, 0, "C")
         obs_texto = str(row["Obs"])[:50] 
         pdf.cell(80, 10, obs_texto, 1, 1, "L")
     
@@ -70,7 +72,7 @@ ftp_watts = st.sidebar.number_input("Potencia (W)", value=250)
 cd_val = st.sidebar.select_slider("Estimativa Cd", options=np.around(np.arange(0.22, 0.41, 0.01), 2), value=0.30)
 obs_tecnica = st.sidebar.text_area("Observacoes para este Setup", placeholder="Ex: Capacete Aero Giro, Maos juntas...")
 
-st.title("🚴 Aero Analyzer Pro v5")
+st.title("🚴 Aero Analyzer Pro v6")
 
 if uploaded_file:
     # Processar imagem base
@@ -80,7 +82,7 @@ if uploaded_file:
     t1, t2 = st.tabs(["📏 1. Calibrar", "👤 2. Silhueta"])
 
     with t1:
-        st.info("Clique no botão para ativar o zoom horizontal e marcar o pneu com precisão. Clique novamente para desativar.")
+        st.info("Clique no botão para ativar o zoom horizontal e marcar o pneu com precisão. O zoom desativa automaticamente após a marcação.")
         
         if 'zoom_active_calib' not in st.session_state:
             st.session_state.zoom_active_calib = False
@@ -93,12 +95,10 @@ if uploaded_file:
         
         zoom_factor_h = 2.5
         if st.session_state.zoom_active_calib:
-            # Zoom horizontal focado na parte inferior central (onde o pneu costuma estar)
-            # Cortamos uma faixa horizontal central na parte de baixo
+            # Zoom horizontal focado na parte inferior central
             crop_w = int(c_w / zoom_factor_h)
             left = (c_w - crop_w) // 2
             right = left + crop_w
-            # Focamos nos 25% inferiores da imagem
             top = int(c_h * 0.75)
             bottom = c_h
             
@@ -120,8 +120,7 @@ if uploaded_file:
                 "zoom_h_active": st.session_state.zoom_active_calib,
                 "zoom_factor_h": zoom_factor_h
             }
-            # Desativar o zoom automaticamente após a marcação ser detectada
-            # Isso fará com que a imagem volte ao tamanho original na próxima renderização
+            # Desativar o zoom automaticamente após a marcação
             if st.session_state.zoom_active_calib:
                 st.session_state.zoom_active_calib = False
                 st.rerun()
@@ -129,8 +128,7 @@ if uploaded_file:
     with t2:
         col_main, col_ctrl = st.columns([4, 1])
         with col_main:
-            st.info("Marque a silhueta clicando nos pontos. A imagem deve aparecer abaixo instantaneamente.")
-            # CORREÇÃO: Usando a imagem base img_pil garantida pelo cache
+            st.info("Marque a silhueta clicando nos pontos. A imagem aparece instantaneamente abaixo.")
             canvas_silh = st_canvas(
                 fill_color="rgba(0,255,0,0.4)", stroke_width=2, stroke_color="#00FF00",
                 background_image=img_pil, drawing_mode="polygon", key="c_silh",
